@@ -1,0 +1,6 @@
+{
+  "name": "Power & Energy Card",
+  "filename": "ha-power-energy-card.js",
+  "render_readme": true,
+  "homeassistant": "2025.1.0"
+}
