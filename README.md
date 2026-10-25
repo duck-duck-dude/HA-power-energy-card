@@ -1,3 +1,5 @@
+<img src="images/logo.svg" alt="Power & Energy Card logo" width="96" align="right">
+
 # Power & Energy Card
 
 A Home Assistant dashboard card that shows where your power is going, right now and today.
