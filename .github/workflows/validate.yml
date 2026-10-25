@@ -13,7 +13,7 @@ jobs:
       - uses: hacs/action@main
         with:
           category: plugin
-          ignore: brands images  # add a README screenshot, then drop "images"
+          ignore: brands
 
   syntax:
     name: JavaScript syntax check

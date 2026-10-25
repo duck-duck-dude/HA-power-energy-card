@@ -2,6 +2,8 @@
 
 A Home Assistant dashboard card that shows where your power is going, right now and today.
 
+<img src="images/screenshot.png" alt="Power & Energy Card showing the Active Load and Energy Today sections" width="391">
+
 - **Active Load**: your biggest loads by live power, each with a bar, its share of whole-home load, the unmonitored remainder and how many devices are offline.
 - **Energy Today**: your biggest loads by energy used since midnight, with optional cost.
 
