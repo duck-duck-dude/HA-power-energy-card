@@ -16,7 +16,7 @@
  * Dependency-free: plain custom elements, no build step.
  */
 
-const CARD_VERSION = "0.2.0";
+const CARD_VERSION = "0.2.1";
 const CARD_TYPE = "power-energy-card";
 const EDITOR_TYPE = "power-energy-card-editor";
 const STATS_REFRESH_MS = 5 * 60 * 1000;
@@ -578,13 +578,21 @@ class PowerEnergyCard extends HTMLElement {
           padding: 0;
           border: none;
           border-radius: var(--ha-dialog-border-radius, 24px);
-          background: var(--ha-card-background, var(--card-background-color, #fff));
+          /* Use the theme's dialog surface (like HA's own pop-ups), not the card
+             background: glass themes make cards nearly transparent and only add
+             the blur to HA's own elements. */
+          background: var(
+            --ha-dialog-surface-background,
+            var(--mdc-theme-surface, var(--card-background-color, #fff))
+          );
+          -webkit-backdrop-filter: var(--ha-dialog-surface-backdrop-filter, none);
+          backdrop-filter: var(--ha-dialog-surface-backdrop-filter, none);
           color: var(--primary-text-color);
-          box-shadow: var(--ha-card-box-shadow, 0 8px 32px rgba(0, 0, 0, 0.35));
+          box-shadow: var(--dialog-box-shadow, 0 8px 32px rgba(0, 0, 0, 0.35));
           overflow: hidden;
         }
         dialog[open] { display: flex; flex-direction: column; }
-        dialog::backdrop { background: rgba(0, 0, 0, 0.5); }
+        dialog::backdrop { background: var(--mdc-dialog-scrim-color, rgba(0, 0, 0, 0.5)); }
         .dlg-head {
           display: flex; align-items: center; justify-content: space-between; gap: 8px;
           padding: 16px 12px 12px 20px; border-bottom: 1px solid var(--divider-color);
