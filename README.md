@@ -8,6 +8,7 @@ A Home Assistant dashboard card that shows where your power is going, right now 
 
 - **Active Load**: your biggest loads by live power, each with a bar, its share of whole-home load, the unmonitored remainder and how many devices are offline.
 - **Energy Today**: your biggest loads by energy used since midnight, with optional cost.
+- **Tap for the full list**: tap the card to open a pop-up with *every* load in both sections, sorted the same way. Offline loads and loads with no energy data are listed at the bottom, and the list keeps updating while it's open.
 
 Loads are added in the visual editor: click **+ Add load**, pick a power sensor from the drop-down, done.
 
@@ -42,7 +43,7 @@ In the editor:
 | Electricity rate | Optional. Price per kWh. Cost = kWh × rate. |
 | Loads to show | How many loads appear in each section (default 5). |
 | Show cost | Hide or show cost when a rate is set. |
-| Appearance | Section titles, and hide either section. |
+| Appearance | Section titles, hide either section, and turn tap-to-show-all on or off. |
 
 **Loads:** click **+ Add load** and pick a power sensor. Each load row has:
 - ✏️ **Edit**: set a display name or icon, or pick a different energy sensor. The editor shows which energy sensor was found automatically, or warns if none was found.
@@ -59,6 +60,7 @@ top_n: 5                                  # default 5
 show_cost: true                           # default true
 show_load: true                           # default true
 show_energy: true                         # default true
+tap_to_expand: true                       # default true: tap the card for the full list
 load_title: Active Load                   # default
 energy_title: Energy Today                # default
 loads:
@@ -68,6 +70,15 @@ loads:
     energy: sensor.fridge_plug_energy     # optional, overrides auto-detection
   - sensor.tv_plug_power                  # shorthand: just the entity
 ```
+
+## The full list
+
+Tapping the card (or pressing Enter when it's focused) opens a pop-up listing every load:
+
+- **Active Load**: all loads by live power. Offline loads are listed last instead of only being counted.
+- **Energy Today**: all loads by energy today, with cost if a rate is set. Loads with no data yet, or with no energy sensor, are listed last with the reason.
+
+Close it with the ✕, by tapping outside it, or with Esc. On phones it opens full-screen. When the card has more loads than it shows, a "Tap for all N loads ›" hint appears at the bottom. Set `tap_to_expand: false` to turn all of this off.
 
 ## How "Energy Today" is calculated
 

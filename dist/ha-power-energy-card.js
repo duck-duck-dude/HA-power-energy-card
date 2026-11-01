@@ -7,6 +7,8 @@
  *                   unmonitored remainder and offline count.
  *   - Energy Today: top N loads by energy since midnight, optional cost.
  *
+ * Tapping the card opens a pop-up with the complete list for both sections.
+ *
  * Energy today is read from Home Assistant's long-term statistics for each
  * load's lifetime energy sensor (found automatically on the same device as
  * the power sensor), so no utility_meter helpers are needed.
@@ -14,7 +16,7 @@
  * Dependency-free: plain custom elements, no build step.
  */
 
-const CARD_VERSION = "0.1.0";
+const CARD_VERSION = "0.2.0";
 const CARD_TYPE = "power-energy-card";
 const EDITOR_TYPE = "power-energy-card-editor";
 const STATS_REFRESH_MS = 5 * 60 * 1000;
@@ -24,6 +26,7 @@ const DEFAULTS = {
   show_cost: true,
   show_load: true,
   show_energy: true,
+  tap_to_expand: true,
   load_title: "Active Load",
   energy_title: "Energy Today",
 };
@@ -35,6 +38,30 @@ const MDI = {
     "M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19Z",
   plus: "M19,13H13V19H11V13H5V11H11V5H13V11H19V13Z",
 };
+
+/* Styles shared by the card and the full-list pop-up. */
+const SECTION_CSS = `
+  .section.divider { border-top: 1px solid var(--divider-color); padding-top: 12px; margin-top: 16px; }
+  .header { display: flex; justify-content: space-between; align-items: baseline; }
+  .title { font-size: 16px; font-weight: 600; }
+  .title ha-icon { --mdc-icon-size: 18px; vertical-align: -3px; }
+  .total { font-size: 20px; font-weight: 700; }
+  .total-sub { font-size: 14px; color: var(--secondary-text-color); margin-left: 6px; }
+  .row { display: grid; grid-template-columns: 22px 1fr auto; align-items: center; column-gap: 10px; margin-top: 9px; }
+  .row ha-icon { --mdc-icon-size: 20px; }
+  .row.inactive { opacity: 0.55; }
+  .mid { min-width: 0; }
+  .label { display: flex; justify-content: space-between; font-size: 14px; }
+  .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .share { color: var(--secondary-text-color); font-size: 12px; margin-left: 8px; }
+  .track { height: 6px; border-radius: 3px; background: var(--divider-color); margin-top: 4px; overflow: hidden; }
+  .bar { height: 100%; border-radius: 3px; }
+  .value { min-width: 62px; text-align: right; line-height: 1.15; }
+  .strong { font-size: 14px; font-weight: 600; }
+  .sub { font-size: 12px; color: var(--secondary-text-color); }
+  .foot { margin-top: 8px; font-size: 12px; color: var(--secondary-text-color); text-align: right; }
+  .empty { margin-top: 9px; color: var(--secondary-text-color); }
+`;
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -178,6 +205,9 @@ class PowerEnergyCard extends HTMLElement {
     this._fetching = false;
     this._timer = undefined;
     this._energyCache = undefined;
+    this._card = undefined;
+    this._dialog = undefined;
+    this._dialogBody = undefined;
   }
 
   static getConfigElement() {
@@ -221,6 +251,7 @@ class PowerEnergyCard extends HTMLElement {
   disconnectedCallback() {
     clearInterval(this._timer);
     this._timer = undefined;
+    if (this._dialog?.open) this._dialog.close();
   }
 
   getCardSize() {
@@ -358,9 +389,9 @@ class PowerEnergyCard extends HTMLElement {
     return amount > 0 && amount < 0.01 ? "&lt;" + f(0.01) : f(amount);
   }
 
-  _row(icon, name, share, valueHtml, pct, accent, gradient) {
+  _row(icon, name, share, valueHtml, pct, accent, gradient, inactive = false) {
     return `
-      <div class="row">
+      <div class="row${inactive ? " inactive" : ""}">
         <ha-icon icon="${esc(icon)}" style="color:${accent}"></ha-icon>
         <div class="mid">
           <div class="label"><span class="name">${esc(name)}</span><span class="share">${share}</span></div>
@@ -370,13 +401,17 @@ class PowerEnergyCard extends HTMLElement {
       </div>`;
   }
 
-  _renderLoad() {
+  /**
+   * Active Load section. `full` = every load (pop-up): offline loads are
+   * listed last instead of only being counted in the footer.
+   */
+  _renderLoad(full = false) {
     const c = this._config;
     const hass = this._hass;
     const all = c.loads.map((l) => ({ l, v: toWatts(hass.states[l.entity]) }));
     const live = all.filter((r) => r.v !== null).sort((a, b) => b.v - a.v);
     const offline = all.length - live.length;
-    const top = live.slice(0, opt(c, "top_n"));
+    const top = full ? live : live.slice(0, opt(c, "top_n"));
     const homeW = c.home_power ? toWatts(hass.states[c.home_power]) : null;
     const monitored = live.reduce((t, r) => t + r.v, 0);
     const max = Math.max(top.length ? top[0].v : 0, 1);
@@ -397,6 +432,23 @@ class PowerEnergyCard extends HTMLElement {
         );
       })
       .join("");
+    const offlineRows = full
+      ? all
+          .filter((r) => r.v === null)
+          .map((r) =>
+            this._row(
+              loadIcon(hass, r.l),
+              loadName(hass, r.l),
+              "",
+              `<span class="sub">offline</span>`,
+              0,
+              "var(--secondary-text-color)",
+              "transparent",
+              true
+            )
+          )
+          .join("")
+      : "";
 
     const headerW = homeW !== null ? homeW : live.length ? monitored : null;
     const unmon = homeW === null ? null : Math.max(homeW - monitored, 0);
@@ -410,12 +462,16 @@ class PowerEnergyCard extends HTMLElement {
           <span class="title"><ha-icon icon="mdi:flash" style="color:#ff9800"></ha-icon> ${esc(opt(c, "load_title"))}</span>
           <span class="total">${headerW === null ? "—" : fmtW(headerW)}</span>
         </div>
-        ${rows || '<div class="empty">No load data</div>'}
+        ${rows || offlineRows ? rows + offlineRows : '<div class="empty">No load data</div>'}
         ${foot ? `<div class="foot">${foot}</div>` : ""}
       </div>`;
   }
 
-  _renderEnergy(divider) {
+  /**
+   * Energy Today section. `full` = every load (pop-up): loads with no energy
+   * data yet are listed last.
+   */
+  _renderEnergy(divider, full = false) {
     const c = this._config;
     const hass = this._hass;
     const rate = c.rate && opt(c, "show_cost") ? toPricePerKwh(hass.states[c.rate]) : null;
@@ -423,7 +479,7 @@ class PowerEnergyCard extends HTMLElement {
 
     const all = c.loads.map((l) => ({ l, v: this._todayKwh(this._energyId(l)) }));
     const live = all.filter((r) => r.v !== null).sort((a, b) => b.v - a.v);
-    const top = live.slice(0, opt(c, "top_n"));
+    const top = full ? live : live.slice(0, opt(c, "top_n"));
     const home = c.home_energy ? toKwh(hass.states[c.home_energy]) : null;
     const monitored = live.reduce((t, r) => t + r.v, 0);
     const max = Math.max(top.length ? top[0].v : 0, 0.001);
@@ -447,6 +503,23 @@ class PowerEnergyCard extends HTMLElement {
         );
       })
       .join("");
+    const noDataRows = full
+      ? all
+          .filter((r) => r.v === null)
+          .map((r) =>
+            this._row(
+              loadIcon(hass, r.l),
+              loadName(hass, r.l),
+              "",
+              `<span class="sub">${this._energyId(r.l) ? "no data" : "no energy sensor"}</span>`,
+              0,
+              "var(--secondary-text-color)",
+              "transparent",
+              true
+            )
+          )
+          .join("")
+      : "";
 
     const headerKwh = home !== null ? home : live.length ? monitored : null;
     const rateTxt =
@@ -463,7 +536,7 @@ class PowerEnergyCard extends HTMLElement {
         : `Monitored ${fmtE(monitored)}${rate === null ? "" : " (" + money(monitored) + ")"} of ${fmtE(home)} home usage${
             rateTxt ? " · " + rateTxt : ""
           }`;
-    const loading = !rows && this._fetching;
+    const loading = !rows && !noDataRows && this._fetching;
 
     return `
       <div class="section ${divider ? "divider" : ""}">
@@ -474,51 +547,155 @@ class PowerEnergyCard extends HTMLElement {
             ${headerKwh === null || rate === null ? "" : `<span class="total-sub">${money(headerKwh)}</span>`}
           </span>
         </div>
-        ${rows || `<div class="empty">${loading ? "Loading…" : "No energy data yet"}</div>`}
+        ${
+          rows || noDataRows
+            ? rows + noDataRows
+            : `<div class="empty">${loading ? "Loading…" : "No energy data yet"}</div>`
+        }
         ${foot ? `<div class="foot">${foot}</div>` : ""}
       </div>`;
+  }
+
+  _expandable() {
+    return opt(this._config, "tap_to_expand") && this._config.loads.length > 0;
+  }
+
+  /** Build the persistent DOM once: styles, the card, and the pop-up dialog. */
+  _ensureSkeleton() {
+    if (this._card) return;
+    this.shadowRoot.innerHTML = `
+      <style>
+        ha-card { padding: 14px 16px 12px; }
+        ha-card.clickable { cursor: pointer; }
+        ha-card.clickable:focus-visible { outline: 2px solid var(--primary-color); outline-offset: 2px; }
+        .more { margin-top: 10px; font-size: 12px; color: var(--primary-color); text-align: right; }
+        ${SECTION_CSS}
+
+        dialog {
+          box-sizing: border-box;
+          width: min(560px, calc(100vw - 32px));
+          max-height: min(85vh, 900px);
+          padding: 0;
+          border: none;
+          border-radius: var(--ha-dialog-border-radius, 24px);
+          background: var(--ha-card-background, var(--card-background-color, #fff));
+          color: var(--primary-text-color);
+          box-shadow: var(--ha-card-box-shadow, 0 8px 32px rgba(0, 0, 0, 0.35));
+          overflow: hidden;
+        }
+        dialog[open] { display: flex; flex-direction: column; }
+        dialog::backdrop { background: rgba(0, 0, 0, 0.5); }
+        .dlg-head {
+          display: flex; align-items: center; justify-content: space-between; gap: 8px;
+          padding: 16px 12px 12px 20px; border-bottom: 1px solid var(--divider-color);
+        }
+        .dlg-title { font-size: 20px; font-weight: 500; }
+        .dlg-count { font-size: 13px; color: var(--secondary-text-color); margin-left: 8px; font-weight: 400; }
+        .dlg-close {
+          display: inline-flex; align-items: center; justify-content: center;
+          width: 40px; height: 40px; border: none; border-radius: 50%;
+          background: transparent; color: var(--secondary-text-color); cursor: pointer;
+        }
+        .dlg-close:hover { background: var(--secondary-background-color, rgba(127,127,127,0.15)); }
+        .dlg-close:focus { outline: none; }
+        .dlg-close:focus-visible { outline: 2px solid var(--primary-color); }
+        .dlg-body:focus { outline: none; }
+        .dlg-body { overflow-y: auto; padding: 8px 20px 20px; overscroll-behavior: contain; }
+        @media (max-width: 600px) {
+          dialog {
+            width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh;
+            margin: 0; border-radius: 0;
+          }
+        }
+      </style>
+      <ha-card></ha-card>
+      <dialog aria-labelledby="dlg-title">
+        <div class="dlg-head">
+          <span class="dlg-title" id="dlg-title">All loads<span class="dlg-count"></span></span>
+          <button class="dlg-close" aria-label="Close"><ha-icon icon="mdi:close"></ha-icon></button>
+        </div>
+        <div class="dlg-body" tabindex="-1" autofocus></div>
+      </dialog>`;
+
+    this._card = this.shadowRoot.querySelector("ha-card");
+    this._dialog = this.shadowRoot.querySelector("dialog");
+    this._dialogBody = this.shadowRoot.querySelector(".dlg-body");
+
+    const open = () => {
+      if (this._expandable()) this._openDialog();
+    };
+    this._card.addEventListener("click", open);
+    this._card.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault();
+        open();
+      }
+    });
+    this.shadowRoot.querySelector(".dlg-close").addEventListener("click", () => this._dialog.close());
+    // A click on the dialog element itself (not its content) is a click on the backdrop.
+    this._dialog.addEventListener("click", (ev) => {
+      if (ev.target === this._dialog) this._dialog.close();
+    });
+  }
+
+  _openDialog() {
+    if (!this._dialog || this._dialog.open) return;
+    this._renderDialog();
+    this._dialogBody.scrollTop = 0;
+    try {
+      this._dialog.showModal();
+    } catch (e) {
+      this._dialog.setAttribute("open", "");
+    }
+  }
+
+  _renderDialog() {
+    const c = this._config;
+    const showLoad = opt(c, "show_load");
+    const showEnergy = opt(c, "show_energy");
+    let body = "";
+    if (showLoad) body += this._renderLoad(true);
+    if (showEnergy) body += this._renderEnergy(showLoad, true);
+    this._dialogBody.innerHTML = body;
+    this.shadowRoot.querySelector(".dlg-count").textContent = `${c.loads.length} load${
+      c.loads.length === 1 ? "" : "s"
+    }`;
   }
 
   _render() {
     if (!this._config) return;
     if (!this._hass) {
-      this.shadowRoot.innerHTML = "";
+      if (this._card) this._card.innerHTML = "";
       return;
     }
+    this._ensureSkeleton();
     const c = this._config;
     const showLoad = opt(c, "show_load");
     const showEnergy = opt(c, "show_energy");
+    const expandable = this._expandable();
     let body = "";
     if (!c.loads.length) {
       body = `<div class="empty">Add loads in the card editor to get started.</div>`;
     } else {
       if (showLoad) body += this._renderLoad();
       if (showEnergy) body += this._renderEnergy(showLoad);
+      if (expandable && c.loads.length > opt(c, "top_n")) {
+        body += `<div class="more">Tap for all ${c.loads.length} loads ›</div>`;
+      }
     }
-    this.shadowRoot.innerHTML = `
-      <style>
-        ha-card { padding: 14px 16px 12px; }
-        .section.divider { border-top: 1px solid var(--divider-color); padding-top: 12px; margin-top: 16px; }
-        .header { display: flex; justify-content: space-between; align-items: baseline; }
-        .title { font-size: 16px; font-weight: 600; }
-        .title ha-icon { --mdc-icon-size: 18px; vertical-align: -3px; }
-        .total { font-size: 20px; font-weight: 700; }
-        .total-sub { font-size: 14px; color: var(--secondary-text-color); margin-left: 6px; }
-        .row { display: grid; grid-template-columns: 22px 1fr auto; align-items: center; column-gap: 10px; margin-top: 9px; }
-        .row ha-icon { --mdc-icon-size: 20px; }
-        .mid { min-width: 0; }
-        .label { display: flex; justify-content: space-between; font-size: 14px; }
-        .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .share { color: var(--secondary-text-color); font-size: 12px; margin-left: 8px; }
-        .track { height: 6px; border-radius: 3px; background: var(--divider-color); margin-top: 4px; overflow: hidden; }
-        .bar { height: 100%; border-radius: 3px; }
-        .value { min-width: 62px; text-align: right; line-height: 1.15; }
-        .strong { font-size: 14px; font-weight: 600; }
-        .sub { font-size: 12px; color: var(--secondary-text-color); }
-        .foot { margin-top: 8px; font-size: 12px; color: var(--secondary-text-color); text-align: right; }
-        .empty { margin-top: 9px; color: var(--secondary-text-color); }
-      </style>
-      <ha-card>${body}</ha-card>`;
+    this._card.innerHTML = body;
+    this._card.classList.toggle("clickable", expandable);
+    if (expandable) {
+      this._card.setAttribute("role", "button");
+      this._card.setAttribute("tabindex", "0");
+      this._card.setAttribute("aria-label", "Show all loads");
+    } else {
+      this._card.removeAttribute("role");
+      this._card.removeAttribute("tabindex");
+      this._card.removeAttribute("aria-label");
+      if (this._dialog.open) this._dialog.close();
+    }
+    if (this._dialog.open) this._renderDialog();
   }
 }
 
@@ -536,6 +713,7 @@ const LABELS = {
   energy_title: "Energy section title",
   show_load: "Show live power section",
   show_energy: "Show energy today section",
+  tap_to_expand: "Tap card to show all loads",
   name: "Name",
   icon: "Icon",
   energy: "Energy sensor",
@@ -575,6 +753,7 @@ const TOP_SCHEMA = [
           { name: "energy_title", selector: { text: {} } },
           { name: "show_load", selector: { boolean: {} } },
           { name: "show_energy", selector: { boolean: {} } },
+          { name: "tap_to_expand", selector: { boolean: {} } },
         ],
       },
     ],
@@ -871,7 +1050,7 @@ if (!window.customCards.some((c) => c.type === CARD_TYPE)) {
   window.customCards.push({
     type: CARD_TYPE,
     name: "Power & Energy Card",
-    description: "Top loads by live power and energy today, with optional cost.",
+    description: "Top loads by live power and energy today, with optional cost. Tap for the full list.",
     preview: true,
     documentationURL: "https://github.com/duck-duck-dude/HA-power-energy-card",
   });
